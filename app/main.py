@@ -62,7 +62,7 @@ def get_cost_guard() -> CostGuard:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """CHO SẴN — chạy lúc app khởi động và lúc tắt."""
-    # shutdown_guard.arm() # uncomment in CP4
+    shutdown_guard.arm() # uncomment in CP4
     emit("service_started", service=SERVICE_NAME, version=SERVICE_VERSION)
     yield
     emit("service_stopped", service=SERVICE_NAME)
@@ -92,6 +92,8 @@ def healthz():
     lời câu hỏi "có cần restart container này không?". Nếu nó phụ thuộc
     Redis, Redis chết một nhịp là cả cụm container bị restart theo.
     """
+    if shutdown_guard.draining:
+        return JSONResponse(status_code=503, content={"status": "draining"})
     return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 @app.get("/readyz")
@@ -106,6 +108,15 @@ def readyz(store: ChatStore = Depends(get_store)):
     Khác /healthz ở chỗ: endpoint này ĐƯỢC PHÉP kiểm tra dependency. Load
     balancer dùng nó để quyết định có đẩy request vào instance này không.
     """
+    if shutdown_guard.draining:
+        return JSONResponse(
+            status_code=503, content={"status": "draining"}
+        )
+        
+    if store.ping() is False:
+        return JSONResponse(
+            status_code=503, content={"status": "not ready", "redis": False}
+        )
     return {"status": "ready", "redis": store.ping()}
 
 # ─────────────────────────────────────────────────────────────
