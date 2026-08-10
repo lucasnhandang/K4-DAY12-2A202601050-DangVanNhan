@@ -23,14 +23,33 @@
 #            docker images day12-chat:prod     # xem dung lượng
 # ═══════════════════════════════════════════════════════════════════
 
-FROM python:3.11
+# BUILDER
+FROM python:3.12-slim AS builder
+WORKDIR /build
+COPY requirements.txt requirements.runtime.txt
+COPY requirements.runtime.txt .
 
+# Just install dependency when using for production
+RUN pip install --no-cache-dir --no-compile --prefix=/install \
+    -r requirements.runtime.txt
+
+# PRODUCTION
+FROM python:3.12-slim
 WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY app/ app/
+COPY utils/ utils/
 
-COPY . .
-
-RUN pip install -r requirements.txt
+RUN adduser --disabled-login --no-create-home appuser
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check w/ Python (image slim doesnt have curl)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import os, urllib.request; port = os.getenv('PORT', '8000'); urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3)"
+
+# Using shell form to expand variable $PORT when running on cloud
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
