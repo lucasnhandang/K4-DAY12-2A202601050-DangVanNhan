@@ -82,7 +82,7 @@ class ChatRequest(BaseModel):
 def healthz():
     """Liveness probe — process còn sống không?
 
-    TODO (CP1 + CP4):
+    (CP1 + CP4):
       - Đang tắt dần (``shutdown_guard.draining``) → trả
         ``JSONResponse(status_code=503, content={"status": "draining"})``
       - Bình thường → ``{"status": "ok", "service": SERVICE_NAME,
@@ -98,7 +98,7 @@ def healthz():
 def readyz(store: ChatStore = Depends(get_store)):
     """Readiness probe — đã sẵn sàng nhận traffic chưa?
 
-    TODO (CP4):
+    (CP4):
       - Đang tắt dần → 503 ``{"status": "draining"}``
       - ``store.ping()`` False → 503 ``{"status": "not ready", "redis": False}``
       - Ngược lại → ``{"status": "ready", "redis": True}``
@@ -121,7 +121,7 @@ def chat(
 ):
     """Gửi một tin nhắn tới service.
 
-    TODO (CP3 + CP4) — làm ĐÚNG THỨ TỰ sau:
+    (CP3 + CP4) — làm ĐÚNG THỨ TỰ sau:
       1. ``bucket.consume(client_id)``        → 429 nếu gọi quá nhanh
       2. ``guard.check(client_id)``           → 402 nếu hết ngân sách ngày
       3. ``history = store.history(client_id)``
@@ -152,8 +152,30 @@ def chat(
     ``client_id`` do ``verify_bearer_token`` trả về, nên request không có
     token hợp lệ sẽ dừng ở 401 trước khi chạm vào bất cứ dòng nào ở đây.
     """
-    raise NotImplementedError("TODO (CP3/CP4): cài đặt /chat")
-
+    bucket.consume(client_id)
+    guard.check(client_id)
+    history = store.history(client_id)
+    result = generate_reply(payload.message, history)
+    store.add_turn(client_id, "user", payload.message)
+    store.add_turn(client_id, "assistant", result["text"])
+    guard.record(client_id, result["usd_cost"])
+    emit(
+        "chat_completed",
+        client_id=client_id,
+        prompt_tokens=result["prompt_tokens"],
+        completion_tokens=result["completion_tokens"],
+        usd_cost=result["usd_cost"],
+    )
+    return {
+        "reply": result["text"],
+        "client_id": client_id,
+        "turns_before": len(history),
+        "usd_cost": result["usd_cost"],
+        "usage": {
+            "prompt": result["prompt_tokens"],
+            "completion": result["completion_tokens"],
+        },
+    }
 
 if __name__ == "__main__":
     import uvicorn
